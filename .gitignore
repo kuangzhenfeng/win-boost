@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.log
+logs/
+res/tray-icon.b64
+npm-debug.log*
+.DS_Store
+Thumbs.db
+*.tmp*
+config.json
+win-boost.lock
