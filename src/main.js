@@ -145,7 +145,9 @@ async function runDaemon({ debug } = {}) {
     await shutdown();
   });
 
-  tray.start();
+  await tray.start();   // 等托盘子进程 ready（菜单注册完成）后再启动 orchestrator，
+                        // 否则 orch.start() 里的 tray.refresh 会在 ready 前发 update-item，
+                        // 触发 getlantern/systray 端 "index out of range" panic 使托盘崩溃。
   await orch.start();
 
   // 托盘自动同步自启状态

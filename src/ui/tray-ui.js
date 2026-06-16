@@ -155,7 +155,17 @@ class TrayUI extends EventEmitter {
     return items;
   }
 
-  start() {
+  /**
+   * 启动托盘。返回 Promise：在托盘子进程真正 ready（菜单已注册、可接受 update-item）后 resolve。
+   *
+   * 关键时序约束：getlantern/systray 在 onReady 里才把菜单项注册成带 internalId 的列表。
+   * 在此之前若发 update-item，exe 端用 seq_id 索引空/半满的内部数组 →
+   * "index out of range" panic → 子进程崩溃 → 托盘消失。
+   * 因此本类所有 refresh（即 sendAction update-item）必须等 ready 之后。
+   *
+   * @returns {Promise<void>}
+   */
+  async start() {
     const SysTrayCtor = tryRequireSysTray();
     if (!SysTrayCtor) {
       this._log('error', 'systray2 未安装，托盘不可用（无头模式）');
@@ -174,12 +184,72 @@ class TrayUI extends EventEmitter {
       copyDir: false,
     });
 
+    // 关键：托盘子进程默认不阻止 Node 退出（无 IPC 通道，child_process 不会让
+    // 事件循环保持引用）。而本程序其余定时器（idle/cpu/beat/dwm）全部 unref()，
+    // 于是 orch.start() 一返回主循环就空了 → Node 退出 → 托盘刚建好就被带走，
+    // 表现为"托盘不显示 / 进程秒退"。
+    // 用一个 unref=false 的 setInterval 持有一个长期引用，确保只要托盘在运行，
+    // 事件循环就不会空。这是守护进程式的 GUI 应用的常规做法。
+    this._keepAlive = setInterval(() => {}, 60 * 60 * 1000);
+
+    // 托盘子进程的 stdio 是 pipe（getlantern/systray 用 stdin/stdout JSON 通信，
+    // stderr 输出它自己的 Go 错误日志）。监听它的退出与 stderr：
+    //  - exit：记录并清掉 keep-alive（托盘已死，程序没理由再挂着）。
+    //  - stderr：getlantern/systray 在 SetIcon 失败等情况下会把详细错误打到 stderr，
+    //    透传到日志，方便排查"图标不显示"这类静默问题。
+    const attachWatchers = () => {
+      const proc = this._tray._process || (this._tray.process && this._tray.process);
+      if (!proc || typeof proc.once !== 'function') return;
+      proc.once('exit', (code) => {
+        this._log('warn', `托盘子进程退出 (code=${code})`);
+        this._ready = false;
+        this._clearKeepAlive();
+      });
+      if (proc.stderr) {
+        let buf = '';
+        proc.stderr.setEncoding('utf8');
+        proc.stderr.on('data', (d) => {
+          buf += d;
+          let i;
+          while ((i = buf.indexOf('\n')) >= 0) {
+            const line = buf.slice(0, i).trim();
+            buf = buf.slice(i + 1);
+            if (line) this._log('warn', `[tray-native] ${line}`);
+          }
+        });
+      }
+    };
+
+    // systray2 的 init()（spawn 子进程 + 等其 onReady）是异步的；_ready 是其 Promise。
+    // 必须等它 resolve 后，exe 端菜单才算注册完成，此时发 update-item 才安全。
+    try {
+      await this._tray._ready;
+      this._ready = true;
+      attachWatchers();
+    } catch (e) {
+      this._log('error', `托盘初始化失败: ${e && e.message}`);
+      this._clearKeepAlive();
+      return;
+    }
+
     this._tray.onClick((action) => {
       const idx = typeof action.seq_id === 'number' ? action.seq_id : parseInt(action.seq_id, 10);
       const meta = this._items[idx] && this._items[idx].meta;
       if (!meta) return;
       this._handleClick(meta, action);
     });
+  }
+
+  /** 托盘是否已就绪（可安全 refresh）。未就绪时 refresh 调用会被静默跳过。 */
+  get ready() {
+    return !!this._ready;
+  }
+
+  _clearKeepAlive() {
+    if (this._keepAlive) {
+      clearInterval(this._keepAlive);
+      this._keepAlive = null;
+    }
   }
 
   _handleClick(meta, action) {
@@ -229,7 +299,7 @@ class TrayUI extends EventEmitter {
   }
 
   _refreshAll() {
-    if (!this._tray) return;
+    if (!this._tray || !this._ready) return; // 未就绪时跳过：ready 前发 update-item 会让 exe panic
     const built = this._buildItems();
     // 逐项 update-item（只更新 title/checked/enabled）
     for (let i = 0; i < built.length; i++) {
@@ -252,6 +322,7 @@ class TrayUI extends EventEmitter {
   }
 
   stop() {
+    this._clearKeepAlive();
     if (this._tray) {
       try {
         this._tray.kill();
