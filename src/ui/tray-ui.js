@@ -76,7 +76,18 @@ class TrayUI extends EventEmitter {
     const s = this._snapshot;
     const items = [];
 
-    // [0] 当前档位（只读）
+    // [0] 打开配置网页（首项，最显眼）
+    items.push({
+      meta: { kind: 'web' },
+      item: {
+        title: '🌐 打开配置网页',
+        tooltip: '在浏览器中打开可视化配置面板',
+        checked: false,
+        enabled: true,
+      },
+    });
+
+    // [1] 当前档位（只读）
     items.push({
       meta: { kind: 'noop' },
       item: {
@@ -87,10 +98,10 @@ class TrayUI extends EventEmitter {
       },
     });
 
-    // [1] 分隔
+    // [2] 分隔
     items.push({ meta: { kind: 'sep' }, item: { title: '─', tooltip: '', checked: false, enabled: false } });
 
-    // [2] 自动
+    // [3] 自动
     items.push({
       meta: { kind: 'mode_auto' },
       item: {
@@ -101,7 +112,7 @@ class TrayUI extends EventEmitter {
       },
     });
 
-    // [3..6] 各档手动
+    // [4..7] 各档手动
     for (const scheme of SCHEME_ORDER) {
       const avail = s.available.includes(scheme);
       items.push({
@@ -115,7 +126,7 @@ class TrayUI extends EventEmitter {
       });
     }
 
-    // [7] 分隔
+    // [8] 分隔
     items.push({ meta: { kind: 'sep' }, item: { title: '─', tooltip: '', checked: false, enabled: false } });
 
     // 开机自启
@@ -185,7 +196,7 @@ class TrayUI extends EventEmitter {
     });
 
     // 关键：托盘子进程默认不阻止 Node 退出（无 IPC 通道，child_process 不会让
-    // 事件循环保持引用）。而本程序其余定时器（idle/cpu/beat/dwm）全部 unref()，
+    // 事件循环保持引用）。而本程序其余定时器（idle/cpu/beat）全部 unref()，
     // 于是 orch.start() 一返回主循环就空了 → Node 退出 → 托盘刚建好就被带走，
     // 表现为"托盘不显示 / 进程秒退"。
     // 用一个 unref=false 的 setInterval 持有一个长期引用，确保只要托盘在运行，
@@ -254,6 +265,9 @@ class TrayUI extends EventEmitter {
 
   _handleClick(meta, action) {
     switch (meta.kind) {
+      case 'web':
+        this.emit('command', { kind: 'web' });
+        break;
       case 'mode_auto':
         this.emit('command', { kind: 'mode_auto' });
         break;

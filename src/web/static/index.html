@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Win-Boost · 电源控制台</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Figtree:wght@400;500;600;700&family=Spline+Sans+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/tailwind.css">
+<link rel="stylesheet" href="/styles.css">
+</head>
+<body class="font-sans text-warm-ink min-h-screen">
+
+  <!-- 暖色 mesh 背景 + 噪点纹理（styles.css 定义） -->
+  <div class="mesh-bg"></div>
+  <div class="grain"></div>
+
+  <main class="relative max-w-6xl mx-auto px-6 py-10">
+
+    <!-- 顶栏 -->
+    <header class="flex items-end justify-between mb-10 animate-rise">
+      <div>
+        <div class="text-warm-soft text-sm tracking-[0.25em] uppercase font-mono">win—boost</div>
+        <h1 class="font-display text-5xl font-medium leading-none mt-1">电源控制台</h1>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="runPill" class="pill pill-run">
+          <span class="dot"></span><span id="runText">运行中</span>
+        </span>
+        <span id="modePill" class="pill">自动</span>
+      </div>
+    </header>
+
+    <!-- 英雄卡 + 工况卡 -->
+    <section class="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-6">
+
+      <!-- 当前档位 -->
+      <div class="hero-card lg:col-span-2 animate-rise" style="animation-delay:.05s">
+        <div class="text-warm-soft text-xs tracking-widest uppercase mb-3">当前档位</div>
+        <div class="flex items-center gap-4">
+          <div id="schemeIcon" class="scheme-glyph">⚡</div>
+          <div id="schemeName" class="font-display text-6xl font-medium">—</div>
+        </div>
+        <div id="schemeSub" class="text-warm-soft text-sm mt-4">读取中…</div>
+      </div>
+
+      <!-- 实时工况 -->
+      <div class="hero-card lg:col-span-3 animate-rise" style="animation-delay:.1s">
+        <div class="text-warm-soft text-xs tracking-widest uppercase mb-4">实时工况</div>
+
+        <div class="mb-5">
+          <div class="flex items-baseline justify-between mb-1.5">
+            <span class="text-sm">CPU 占用（EMA）</span>
+            <span id="cpuVal" class="font-mono text-2xl">0%</span>
+          </div>
+          <div class="meter">
+            <div id="cpuBar" class="meter-fill" style="width:0%"></div>
+            <div id="cpuHighMark" class="meter-mark"></div>
+            <div id="cpuLowMark" class="meter-mark low"></div>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mt-5">
+          <div class="stat">
+            <div class="stat-label">空闲</div>
+            <div id="idleVal" class="stat-val font-mono">00:00</div>
+            <div id="idleBar" class="stat-sub"></div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">CPU 性能</div>
+            <div id="pdhVal" class="stat-val font-mono">0%</div>
+            <div class="stat-sub">性能比（&gt;100 睿频）</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">卡顿</div>
+            <div id="jankVal" class="stat-val font-mono">0</div>
+            <div class="stat-sub">次 / 分</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">负载态</div>
+            <div id="loadVal" class="stat-val">正常</div>
+            <div class="stat-sub" id="loadDetail">—</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 历史趋势 -->
+    <section class="hero-card mb-6 animate-rise" style="animation-delay:.125s">
+      <div class="flex flex-wrap items-center justify-between gap-4 mb-4">
+        <div>
+          <div class="text-warm-soft text-xs tracking-widest uppercase mb-1">历史趋势</div>
+          <div class="font-display text-2xl">CPU · 性能比 · 卡顿</div>
+        </div>
+        <div class="range-switcher" id="rangeSwitcher">
+          <button data-range="1h" class="active">1 小时</button>
+          <button data-range="1d">1 天</button>
+          <button data-range="30d">30 天</button>
+        </div>
+      </div>
+
+      <div class="chart-legend">
+        <span class="lg-item"><span class="lg-sw" style="background:var(--grass)"></span>CPU 占用</span>
+        <span class="lg-item"><span class="lg-sw lg-dash" style="background:var(--slate2)"></span>处理器性能比</span>
+        <span class="lg-item"><span class="lg-sw" style="background:var(--plum)"></span>卡顿/分</span>
+        <span class="lg-sep"></span>
+        <span class="lg-item"><span class="lg-sw band saver"></span>节能</span>
+        <span class="lg-item"><span class="lg-sw band balanced"></span>平衡</span>
+        <span class="lg-item"><span class="lg-sw band performance"></span>高性能</span>
+        <span class="lg-item"><span class="lg-sw band ultimate"></span>卓越性能</span>
+      </div>
+
+      <div class="chart-wrap">
+        <canvas id="trendCanvas"></canvas>
+        <div id="chartTip" class="chart-tip"></div>
+      </div>
+    </section>
+
+    <!-- 模式快捷 -->
+    <section class="hero-card mb-6 animate-rise" style="animation-delay:.15s">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <div class="text-warm-soft text-xs tracking-widest uppercase mb-1">运行模式</div>
+          <div class="font-display text-2xl">切换方式</div>
+        </div>
+        <div class="flex flex-wrap items-center gap-2" id="modeBar">
+          <button data-mode="auto" class="mode-btn">自动切换</button>
+          <button data-pause="true" class="mode-btn ghost">暂停自动</button>
+          <span class="text-warm-soft text-sm mx-1">手动锁定：</span>
+          <div id="manualBtns" class="flex gap-2"></div>
+        </div>
+      </div>
+    </section>
+    <!-- 配置卡组 -->
+    <section id="configCards" class="grid grid-cols-1 md:grid-cols-2 gap-6"></section>
+
+    <footer class="text-center text-warm-soft text-xs mt-12 mb-4 font-mono">
+      win-boost · 仅监听 127.0.0.1 · 端口每次启动随机
+    </footer>
+  </main>
+
+  <!-- toast -->
+  <div id="toast" class="toast"></div>
+
+  <script src="/chart.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

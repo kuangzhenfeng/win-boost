@@ -6,7 +6,6 @@ const { promisify } = require('util');
 const { Scheme, SCHEME_LABEL } = require('./constants');
 const { PowerController } = require('./power/power-controller');
 const { getIdleMilliseconds, isAvailable: idleAvailable } = require('./native/idle-native');
-const { getDwmTiming, isAvailable: dwmAvailable } = require('./native/dwm-native');
 const { summarize } = require('./monitors/cpu-monitor');
 const { install, uninstall, query } = require('./autostart');
 const { getLogger } = require('./logging/logger');
@@ -28,7 +27,7 @@ function getSelfExePath() {
 }
 
 /**
- * --status：一次性打印配置、当前档位、CPU、空闲、DWM、方案映射、自启项后退出。
+ * --status：一次性打印配置、当前档位、CPU、空闲、卡顿、方案映射、自启项后退出。
  */
 async function cmdStatus({ debug } = {}) {
   const logger = getLogger({ debug });
@@ -91,20 +90,20 @@ async function cmdStatus({ debug } = {}) {
     println(`  采样失败: ${e.message}`);
   }
 
-  // DWM
+  // 卡顿（心跳探针，短时采样）
   println('');
-  println('-- DWM 副判据 --');
-  if (dwmAvailable()) {
-    const t = getDwmTiming();
-    if (t) {
-      println(`  刷新率: ${t.refreshHz.toFixed(2)} Hz`);
-      println(`  累计合成帧 cFrame: ${t.cFrame}`);
-      println(`  累计丢帧 cFrameDropped: ${t.cFrameDropped}`);
-    } else {
-      println('  DwmGetCompositionTimingInfo 返回非 0（DWM 关闭/锁屏/全屏独占）');
-    }
+  println('-- 卡顿（心跳探针，采样 3s）--');
+  if (cfg.jankEnabled !== false) {
+    const { JankMonitor } = require('./monitors/jank-monitor');
+    const jank = new JankMonitor({ now: () => Date.now() });
+    let last = null;
+    jank.on('sample', ({ janksPerMin }) => { last = janksPerMin; });
+    jank.start();
+    await new Promise((r) => setTimeout(r, 3000));
+    jank.stop();
+    println(`  卡顿: ${last == null ? 0 : last} 次/分（阈值 ${cfg.jankPerMin}）`);
   } else {
-    println('  dwm-native 不可用');
+    println('  已禁用');
   }
 
   // 自启

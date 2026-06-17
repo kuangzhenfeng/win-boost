@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "mode": "auto",
+  "manualScheme": "BALANCED",
+
+  "idleThresholdMin": 5,
+  "idlePollMs": 2000,
+
+  "cpuHighPct": 70,
+  "cpuCooldownPct": 45,
+  "cpuHighHoldSec": 8,
+  "cpuCooldownHoldSec": 10,
+  "cpuEma": 0.3,
+  "cpuSampleMs": 1000,
+
+  "pdhEnabled": true,
+  "pdhHighPct": 130,
+  "pdhHoldSec": 8,
+  "pdhPollMs": 1000,
+
+  "jankEnabled": true,
+  "jankPerMin": 20,
+  "jankHoldSec": 8,
+
+  "preferUltimate": true,
+  "minDwellSec": 15,
+
+  "autoStart": false,
+  "schemeMapping": {},
+  "lastScheme": null,
+
+  "logLevel": "info"
+}

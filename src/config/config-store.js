@@ -4,12 +4,15 @@ const { EventEmitter } = require('events');
 const { DEFAULT_CONFIG, CONFIG_TYPES } = require('../constants');
 const { getConfigPath } = require('../util/paths');
 const { atomicWriteJson, readJsonSafe } = require('../util/atomic-write');
+const { enforceConstraints } = require('../web/schema');
 
 /**
  * ConfigStore：加载 / 校验 / 原子保存 / 默认合并 / 变更通知。
  * - load 时合并默认值（新字段向后兼容），非法字段回退默认并记录。
  * - 仅允许白名单字段；未知字段忽略。
  * - set/replace 原子写盘，并 emit('change', fullConfig)。
+ * - 跨字段约束（如升档阈值须 > 降档阈值）在每次落盘前由 enforceConstraints 兜底，
+ *   保证存储数据始终自洽，防止 API 直写坏数据或历史不自洽数据。
  */
 class ConfigStore extends EventEmitter {
   constructor({ logger } = {}) {
@@ -70,7 +73,8 @@ class ConfigStore extends EventEmitter {
         this._logWarn(`非法字段 ${key}=${JSON.stringify(val)}，回退默认`);
       }
     }
-    this._cfg = merged;
+    // 跨字段约束兜底（自洽后落盘）
+    this._cfg = enforceConstraints(merged);
     this._loaded = true;
     // 合并后落盘，保证 schema 一致
     this._persist();
@@ -108,6 +112,8 @@ class ConfigStore extends EventEmitter {
       }
     }
     if (changed) {
+      // 跨字段约束兜底：例如降档被设到 ≥ 升档时，升档会被夹到自洽值
+      this._cfg = enforceConstraints(this._cfg);
       this._persist();
       this.emit('change', this._clone(this._cfg));
     }
@@ -121,7 +127,7 @@ class ConfigStore extends EventEmitter {
       const val = newCfg[key];
       if (val !== undefined && this._isValid(key, val)) merged[key] = val;
     }
-    this._cfg = merged;
+    this._cfg = enforceConstraints(merged);
     this._persist();
     this.emit('change', this._clone(this._cfg));
     return this._cfg;

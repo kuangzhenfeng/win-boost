@@ -5,8 +5,8 @@
  * 单独文件便于维护（package.json 内 pkg 字段与此等价）。
  *
  * 要点：
- *  - scripts: pkg 静态分析 require 链；显式列出 src/**/*.js。
- *  - assets: systray2 的 traybin 预编译二进制 + 图标必须打进 exe。
+ *  - scripts: pkg 静态分析 require 链；显式列出 src 下所有 js。
+ *  - assets: systray2 的 traybin 预编译二进制 + 图标 + web 静态资源必须打进 exe。
  *  - nativeModule.koffi='copydir': koffi 的 .node 原生模块随 exe 携带，运行时解包。
  *  - target: node18-win-x64（koffi prebuild 需匹配 Node ABI）。
  *
@@ -21,6 +21,8 @@ module.exports = {
     'res/tray-icon.b64',
     'assets/icon.ico',
     'node_modules/systray2/traybin/**/*',
+    'src/web/static/**/*',
+    'src/config/defaults.json',
   ],
   targets: ['node18-win-x64'],
   outputPath: 'dist',

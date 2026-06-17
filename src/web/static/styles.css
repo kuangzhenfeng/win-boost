@@ -1,0 +1,509 @@
+/* ============================================================
+   Win-Boost 控制台 — 柔和暖色卡片自定义样式
+   Tailwind 覆盖不到的部分：背景 mesh、噪点、卡片质感、滑块、开关、动画
+   ============================================================ */
+
+:root {
+  --warm-white: #faf8f4;
+  --warm-sand: #e8e0d5;
+  --warm-card: #ffffff;
+  --warm-ink: #3a3631;
+  --warm-soft: #6b645c;
+  --warm-line: #ece6dc;
+  --grass: #6b9e5c;
+  --amber: #e0995e;
+  --slate2: #8a95a5;
+  --rust: #c56b4a;
+  --plum: #9b7bc4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--warm-white);
+  color: var(--warm-ink);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---- 暖色径向 mesh 背景 ---- */
+.mesh-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(900px 600px at 12% -5%, rgba(232, 224, 213, 0.9), transparent 60%),
+    radial-gradient(800px 700px at 95% 0%, rgba(107, 158, 92, 0.08), transparent 55%),
+    radial-gradient(900px 800px at 80% 110%, rgba(224, 153, 94, 0.08), transparent 55%),
+    var(--warm-white);
+}
+
+/* ---- 细噪点纹理（SVG turbulence，极低不透明度）---- */
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.4;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.06'/%3E%3C/svg%3E");
+}
+
+/* ---- 卡片 ---- */
+.hero-card {
+  background: var(--warm-card);
+  border: 1px solid var(--warm-line);
+  border-radius: 22px;
+  padding: 1.75rem;
+  box-shadow: 0 1px 2px rgba(58, 54, 49, 0.04), 0 10px 28px rgba(58, 54, 49, 0.07);
+  transition: transform 0.25s cubic-bezier(0.2, 0.7, 0.2, 1), box-shadow 0.25s;
+}
+.hero-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 2px 4px rgba(58, 54, 49, 0.05), 0 16px 40px rgba(58, 54, 49, 0.1);
+}
+
+.config-card {
+  background: var(--warm-card);
+  border: 1px solid var(--warm-line);
+  border-radius: 22px;
+  padding: 1.5rem;
+  box-shadow: 0 1px 2px rgba(58, 54, 49, 0.04), 0 8px 22px rgba(58, 54, 49, 0.05);
+}
+
+/* ---- 顶栏药丸 ---- */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.3rem 0.85rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  background: rgba(232, 224, 213, 0.6);
+  color: var(--warm-soft);
+  border: 1px solid var(--warm-line);
+}
+.pill .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: var(--grass);
+}
+.pill-run .dot {
+  animation: breathe 2.4s ease-in-out infinite;
+}
+.pill.paused .dot {
+  background: var(--slate2);
+  animation: none;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.4); opacity: 0.55; }
+}
+
+/* ---- 英雄卡档位 ---- */
+.scheme-glyph {
+  width: 64px;
+  height: 64px;
+  border-radius: 18px;
+  display: grid;
+  place-items: center;
+  font-size: 30px;
+  background: linear-gradient(145deg, rgba(107, 158, 92, 0.18), rgba(232, 224, 213, 0.5));
+  border: 1px solid var(--warm-line);
+  transition: background 0.3s;
+}
+.scheme-glyph.s-SAVER { background: linear-gradient(145deg, rgba(138, 149, 165, 0.2), rgba(232, 224, 213, 0.5)); }
+.scheme-glyph.s-PERFORMANCE { background: linear-gradient(145deg, rgba(224, 153, 94, 0.22), rgba(232, 224, 213, 0.5)); }
+.scheme-glyph.s-ULTIMATE { background: linear-gradient(145deg, rgba(197, 107, 74, 0.22), rgba(232, 224, 213, 0.5)); }
+
+/* ---- 工况：CPU 条 ---- */
+.meter {
+  position: relative;
+  height: 12px;
+  border-radius: 999px;
+  background: rgba(232, 224, 213, 0.7);
+  overflow: hidden;
+}
+.meter-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--grass), #84b877);
+  transition: width 0.4s cubic-bezier(0.2, 0.7, 0.2, 1), background 0.3s;
+}
+.meter-fill.high {
+  background: linear-gradient(90deg, var(--amber), #d88748);
+  animation: pulseHi 1.6s ease-in-out infinite;
+}
+@keyframes pulseHi {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.meter-mark {
+  position: absolute;
+  top: -3px;
+  bottom: -3px;
+  width: 2px;
+  background: var(--amber);
+  opacity: 0.7;
+}
+.meter-mark.low {
+  background: var(--slate2);
+}
+
+/* ---- 工况：stat 小格 ---- */
+.stat {
+  background: rgba(250, 248, 244, 0.7);
+  border: 1px solid var(--warm-line);
+  border-radius: 14px;
+  padding: 0.8rem 0.9rem;
+}
+.stat-label {
+  font-size: 0.7rem;
+  color: var(--warm-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+.stat-val {
+  font-size: 1.35rem;
+  font-weight: 600;
+  margin-top: 2px;
+}
+.stat-sub {
+  font-size: 0.72rem;
+  color: var(--warm-soft);
+  margin-top: 2px;
+}
+
+/* ---- 模式按钮 ---- */
+.mode-btn {
+  padding: 0.45rem 1rem;
+  border-radius: 12px;
+  font-weight: 500;
+  font-size: 0.88rem;
+  background: var(--grass);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.15s, filter 0.15s;
+}
+.mode-btn:hover { transform: translateY(-1px); filter: brightness(1.05); }
+.mode-btn.ghost {
+  background: transparent;
+  color: var(--warm-ink);
+  border: 1px solid var(--warm-line);
+}
+.scheme-btn {
+  padding: 0.4rem 0.85rem;
+  border-radius: 11px;
+  font-size: 0.85rem;
+  background: rgba(232, 224, 213, 0.6);
+  border: 1px solid var(--warm-line);
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.scheme-btn:hover { background: rgba(232, 224, 213, 0.95); }
+.scheme-btn.active {
+  background: var(--warm-ink);
+  color: #fff;
+  border-color: var(--warm-ink);
+}
+.scheme-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
+/* ---- 表单控件 ---- */
+.field { margin-bottom: 1rem; }
+.field-label {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 0.85rem;
+  font-weight: 500;
+  margin-bottom: 0.4rem;
+}
+.field-label .val {
+  font-family: var(--mono, "Spline Sans Mono", monospace);
+  color: var(--warm-soft);
+  font-size: 0.82rem;
+}
+.field-help {
+  font-size: 0.72rem;
+  color: var(--warm-soft);
+  margin-top: 0.3rem;
+  line-height: 1.4;
+}
+
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(232, 224, 213, 0.9);
+  outline: none;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--grass);
+  border: 3px solid #fff;
+  box-shadow: 0 1px 4px rgba(58, 54, 49, 0.25);
+  cursor: pointer;
+  transition: transform 0.12s;
+}
+input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); }
+input[type="range"]::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--grass);
+  border: 3px solid #fff;
+  cursor: pointer;
+}
+
+input[type="number"] {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 11px;
+  border: 1px solid var(--warm-line);
+  background: rgba(250, 248, 244, 0.8);
+  font-family: var(--mono, "Spline Sans Mono", monospace);
+  font-size: 0.9rem;
+  color: var(--warm-ink);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+input[type="number"]:focus {
+  outline: none;
+  border-color: var(--grass);
+  box-shadow: 0 0 0 3px rgba(107, 158, 92, 0.15);
+}
+input[type="number"].invalid {
+  border-color: var(--rust);
+  box-shadow: 0 0 0 3px rgba(197, 107, 74, 0.15);
+}
+
+select {
+  width: 100%;
+  padding: 0.5rem 0.7rem;
+  border-radius: 11px;
+  border: 1px solid var(--warm-line);
+  background: rgba(250, 248, 244, 0.8);
+  font-size: 0.9rem;
+  color: var(--warm-ink);
+  cursor: pointer;
+}
+select:focus {
+  outline: none;
+  border-color: var(--grass);
+  box-shadow: 0 0 0 3px rgba(107, 158, 92, 0.15);
+}
+
+/* ---- 开关 ---- */
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 46px;
+  height: 26px;
+  flex-shrink: 0;
+}
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch .track {
+  position: absolute;
+  inset: 0;
+  border-radius: 999px;
+  background: rgba(138, 149, 165, 0.4);
+  transition: background 0.2s;
+}
+.switch .track::before {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  left: 3px;
+  top: 3px;
+  border-radius: 999px;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(58, 54, 49, 0.3);
+  transition: transform 0.2s cubic-bezier(0.2, 0.7, 0.2, 1);
+}
+.switch input:checked + .track { background: var(--grass); }
+.switch input:checked + .track::before { transform: translateX(20px); }
+
+/* ---- 卡内保存/重置按钮 ---- */
+.card-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin-top: 0.6rem;
+}
+.save-btn {
+  padding: 0.5rem 1.2rem;
+  border-radius: 12px;
+  font-weight: 500;
+  font-size: 0.85rem;
+  background: var(--warm-ink);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.15s, filter 0.15s;
+}
+.save-btn:hover { transform: translateY(-1px); filter: brightness(1.1); }
+.save-btn:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+.reset-btn {
+  padding: 0.5rem 1.1rem;
+  border-radius: 12px;
+  font-weight: 500;
+  font-size: 0.85rem;
+  background: transparent;
+  color: var(--warm-soft);
+  border: 1px solid var(--warm-line);
+  cursor: pointer;
+  transition: transform 0.15s, color 0.15s, border-color 0.15s, background 0.15s;
+}
+.reset-btn:hover {
+  transform: translateY(-1px);
+  color: var(--warm-ink);
+  border-color: rgba(107, 158, 92, 0.5);
+  background: rgba(107, 158, 92, 0.06);
+}
+
+/* ---- 字段依赖：父关时灰显 ---- */
+.field.dim { opacity: 0.45; pointer-events: none; }
+
+/* ---- toast ---- */
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: 2rem;
+  transform: translateX(-50%) translateY(20px);
+  background: var(--warm-ink);
+  color: #fff;
+  padding: 0.7rem 1.4rem;
+  border-radius: 14px;
+  font-size: 0.9rem;
+  box-shadow: 0 8px 30px rgba(58, 54, 49, 0.3);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.25s, transform 0.25s;
+  z-index: 50;
+}
+.toast.show {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+.toast.err { background: var(--rust); }
+
+/* ---- 卡片错位渐入 ---- */
+@keyframes rise {
+  0% { opacity: 0; transform: translateY(14px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+.animate-rise { animation: rise 0.6s cubic-bezier(0.2, 0.7, 0.2, 1) both; }
+
+/* ============================================================
+   历史趋势卡
+   ============================================================ */
+
+/* 维度分段切换器：胶囊容器，选中态暖墨填充（与 scheme-btn.active 一致） */
+.range-switcher {
+  display: inline-flex;
+  background: rgba(232, 224, 213, 0.6);
+  border: 1px solid var(--warm-line);
+  border-radius: 12px;
+  padding: 3px;
+  gap: 2px;
+}
+.range-switcher button {
+  padding: 0.4rem 0.9rem;
+  border-radius: 9px;
+  font-size: 0.82rem;
+  font-weight: 500;
+  background: transparent;
+  color: var(--warm-soft);
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s, transform 0.12s;
+}
+.range-switcher button:hover { color: var(--warm-ink); }
+.range-switcher button.active {
+  background: var(--warm-ink);
+  color: #fff;
+}
+
+/* 图例行 */
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  font-size: 0.75rem;
+  color: var(--warm-soft);
+  margin-bottom: 0.75rem;
+}
+.lg-item { display: inline-flex; align-items: center; gap: 0.35rem; }
+.lg-sep { width: 1px; height: 14px; background: var(--warm-line); display: inline-block; }
+.lg-sw {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.lg-sw.lg-dash {
+  background: repeating-linear-gradient(90deg, var(--slate2) 0 3px, transparent 3px 6px);
+  border-radius: 2px;
+}
+.lg-sw.band {
+  background: transparent;
+  border: 1px solid var(--warm-line);
+}
+.lg-sw.band.saver { background: rgba(138, 149, 165, 0.45); }
+.lg-sw.band.balanced { background: rgba(107, 158, 92, 0.45); }
+.lg-sw.band.performance { background: rgba(224, 153, 94, 0.5); }
+.lg-sw.band.ultimate { background: rgba(197, 107, 74, 0.5); }
+
+/* 画布容器 */
+.chart-wrap {
+  position: relative;
+  width: 100%;
+  height: 280px;
+}
+.chart-wrap canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 悬停 tooltip（DOM，定位由 chart.js 计算） */
+.chart-tip {
+  position: absolute;
+  pointer-events: none;
+  background: var(--warm-ink);
+  color: #fff;
+  padding: 0.5rem 0.7rem;
+  border-radius: 10px;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  box-shadow: 0 6px 22px rgba(58, 54, 49, 0.28);
+  opacity: 0;
+  transform: translateY(-4px);
+  transition: opacity 0.15s, transform 0.15s;
+  white-space: nowrap;
+  z-index: 5;
+}
+.chart-tip.show { opacity: 1; transform: translateY(0); }
+.chart-tip .tt-time {
+  font-family: var(--mono, "Spline Sans Mono", monospace);
+  opacity: 0.75;
+  margin-bottom: 2px;
+}
+.chart-tip .tt-row { display: flex; align-items: center; gap: 0.4rem; }
+.chart-tip .tt-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+.chart-tip .tt-dot.cpu { background: var(--grass); }
+.chart-tip .tt-dot.perf { background: var(--slate2); }
+.chart-tip .tt-dot.jank { background: var(--plum); }

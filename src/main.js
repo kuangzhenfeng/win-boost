@@ -8,7 +8,7 @@ const { PowerController } = require('./power/power-controller');
 const { Orchestrator } = require('./orchestrator');
 const { TrayUI } = require('./ui/tray-ui');
 const { isDebug, isWindows } = require('./util/env');
-const { getLockPath, getRootDir, getConfigPath } = require('./util/paths');
+const { getLockPath, getRootDir, getConfigPath, getWebServerInfoPath } = require('./util/paths');
 const { REG_VALUE_NAME } = require('./constants');
 const cli = require('./cli');
 
@@ -115,7 +115,11 @@ async function runDaemon({ debug } = {}) {
   });
 
   // 托盘命令 → 自启/设置/退出
-  orch.on('autostart', async (value) => {
+  /**
+   * 设置开机自启：写/删注册表项 + 同步配置镜像 + 刷新托盘。
+   * 提炼为函数，供 web 侧 onAutostart 复用。
+   */
+  async function setAutostart(value) {
     try {
       if (value) {
         const self = process.pkg ? process.execPath : `"${process.execPath}" "${path.join(__dirname, 'main.js')}"`;
@@ -133,7 +137,9 @@ async function runDaemon({ debug } = {}) {
     } catch (e) {
       logger.error(`自启操作失败: ${e.message}`);
     }
-  });
+  }
+
+  orch.on('autostart', (value) => setAutostart(value));
 
   orch.on('settings', () => {
     const { exec } = require('child_process');
@@ -154,6 +160,49 @@ async function runDaemon({ debug } = {}) {
   const { isInstalled } = require('./autostart');
   tray.setAutostart(isInstalled());
 
+  // ---- 内嵌 web 服务（仅 127.0.0.1，随机端口 + 一次性令牌）----
+  const crypto = require('crypto');
+  const { createWebServer } = require('./web/server');
+  const { HistoryRecorder } = require('./metrics/history-recorder');
+  const { atomicWriteJson } = require('./util/atomic-write');
+  const token = crypto.randomBytes(18).toString('base64url');
+  // 历史趋势记录器：复用 orchestrator 运行态快照，独立于 web server 生命周期
+  const history = new HistoryRecorder({ orchestrator: orch, logger });
+  history.start();
+  let web;
+  try {
+    web = await createWebServer({
+      configStore: cfgStore,
+      orchestrator: orch,
+      historyRecorder: history,
+      token,
+      logger,
+      onAutostart: (v) => setAutostart(v),
+    });
+    logger.info(`配置网页: ${web.url}`);
+    // 写发现信息（端口/令牌/PID），供外部工具/书签重建
+    try {
+      atomicWriteJson(getWebServerInfoPath(), { port: web.port, token, pid: process.pid });
+    } catch (e) {
+      logger.warn(`写 web-server.json 失败: ${e.message}`);
+    }
+    // 配置变更 → 热重载
+    cfgStore.on('change', (cfg) => {
+      try {
+        orch.applyConfig(cfg);
+      } catch (e) {
+        logger.error(`热重载失败: ${e.message}`);
+      }
+    });
+    // 托盘"打开配置网页" → 用默认浏览器打开
+    orch.on('web', () => {
+      const { exec } = require('child_process');
+      exec(`start "" "${web.url}"`, { windowsHide: true });
+    });
+  } catch (e) {
+    logger.warn(`web 服务启动失败（功能不可用，不影响托盘/状态机）: ${e.message}`);
+  }
+
   // 优雅退出
   let shuttingDown = false;
   async function shutdown() {
@@ -162,6 +211,8 @@ async function runDaemon({ debug } = {}) {
     try {
       orch.stop();
       tray.stop();
+      if (history) history.stop();
+      if (web) await web.close();
     } finally {
       lock.release();
       logger.info('Win-Boost 已退出');

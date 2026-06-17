@@ -42,40 +42,9 @@ const REG_RUN_KEY = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run';
 const REG_VALUE_NAME = APP_NAME;
 
 // 配置默认值。ConfigStore 用它做"缺失字段补默认 + 非法值回退"。
-const DEFAULT_CONFIG = Object.freeze({
-  version: 1,
-  mode: 'auto', // 'auto' | 'manual'
-  manualScheme: Scheme.BALANCED,
-
-  // 空闲检测
-  idleThresholdMin: 5,
-  idlePollMs: 2000,
-
-  // CPU 主判据（滞回）
-  cpuHighPct: 70,
-  cpuCooldownPct: 45,
-  cpuHighHoldSec: 8,
-  cpuCooldownHoldSec: 10,
-  cpuEma: 0.3,
-  cpuSampleMs: 1000,
-
-  // DWM 副判据
-  dwmEnabled: true,
-  dwmDropFramesPerMin: 60,
-  dwmHoldSec: 8,
-  dwmPollMs: 1000,
-
-  // 状态机防抖
-  preferUltimate: true,
-  minDwellSec: 15,
-
-  // 运行时镜像
-  autoStart: false,
-  schemeMapping: {}, // 启动填充：{ SAVER:{guid,friendly}, ... }
-  lastScheme: null,
-
-  logLevel: 'info',
-});
+// 从 src/config/defaults.json 加载（单一事实来源外置为数据文件，便于查看/维护）。
+// 深拷贝一份并冻结，避免运行中被误改；每次 require 拿到独立副本。
+const DEFAULT_CONFIG = Object.freeze(JSON.parse(JSON.stringify(require('./config/defaults.json'))));
 
 // 配置字段类型规范（用于 ConfigStore 校验）
 const CONFIG_TYPES = {
@@ -90,10 +59,13 @@ const CONFIG_TYPES = {
   cpuCooldownHoldSec: 'number',
   cpuEma: 'number',
   cpuSampleMs: 'number',
-  dwmEnabled: 'boolean',
-  dwmDropFramesPerMin: 'number',
-  dwmHoldSec: 'number',
-  dwmPollMs: 'number',
+  pdhEnabled: 'boolean',
+  pdhHighPct: 'number',
+  pdhHoldSec: 'number',
+  pdhPollMs: 'number',
+  jankEnabled: 'boolean',
+  jankPerMin: 'number',
+  jankHoldSec: 'number',
   preferUltimate: 'boolean',
   minDwellSec: 'number',
   autoStart: 'boolean',

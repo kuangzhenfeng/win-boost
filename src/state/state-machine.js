@@ -87,6 +87,15 @@ class StateMachine extends EventEmitter {
     this._manualMode = false;
   }
 
+  // ---- 热重载（供配置热更新，不改当前档位）----
+  setPreferUltimate(b) {
+    this._preferUltimate = !!b;
+  }
+
+  setMinDwellMs(ms) {
+    this._minDwellMs = ms;
+  }
+
   get isManual() {
     return this._manualMode;
   }

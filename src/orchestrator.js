@@ -3,9 +3,10 @@
 const { EventEmitter } = require('events');
 const { IdleMonitor } = require('./monitors/idle-monitor');
 const { CpuMonitor } = require('./monitors/cpu-monitor');
+const { JankMonitor } = require('./monitors/jank-monitor');
 const { LoadMonitor } = require('./monitors/load-monitor');
 const { StateMachine } = require('./state/state-machine');
-const { getDwmTiming } = require('./native/dwm-native');
+const { getProcessorPerformance } = require('./native/pdh-native');
 const { Scheme } = require('./constants');
 
 /**
@@ -15,7 +16,8 @@ const { Scheme } = require('./constants');
  * 信号流：
  *   IdleMonitor.signal  ─┐
  *   CpuMonitor.sample   ─┼─→ LoadMonitor ─signal─→ SM.feed ─→ Power.setActive ─→ Tray.refresh
- *   (DWM 周期采样)       ─┘
+ *   JankMonitor.sample  ─┤
+ *   (PDH 周期采样)       ─┘
  */
 class Orchestrator extends EventEmitter {
   constructor({ cfg, power, tray, debug = false, logger } = {}) {
@@ -46,10 +48,12 @@ class Orchestrator extends EventEmitter {
       logger,
     });
 
+    this._jank = new JankMonitor({ enabled: cfg.jankEnabled !== false, logger });
+
     this._load = new LoadMonitor({ cfg, debug, logger });
 
-    this._dwmTimer = null;
-    this._dwmUsable = cfg.dwmEnabled !== false && !!getDwmTiming();
+    this._pdhTimer = null;
+    this._pdhUsable = cfg.pdhEnabled !== false && !!getProcessorPerformance();
 
     // 心跳周期：把"当前工况"喂给状态机的频率。
     // 关键：monitor 的 signal 是边沿触发（只在 high↔normal 翻转时发一次），
@@ -57,6 +61,7 @@ class Orchestrator extends EventEmitter {
     // 心跳用 level（当前态）周期重喂，使被抑制的转移在驻留期满后自然重试。
     this._beatMs = cfg.idlePollMs || 2000;
     this._beatTimer = null;
+    this._startedAt = Date.now();
   }
 
   _log(level, msg) {
@@ -85,21 +90,24 @@ class Orchestrator extends EventEmitter {
       }
       this._load.feedCpu(pct);
     });
+    // Jank（卡顿探针）→ Load → 信号
+    this._jank.on('sample', ({ janksPerMin }) => {
+      if (this._debug && this._logger && this._logger.debug) {
+        this._logger.debug(`[jank] janks/min=${janksPerMin}`);
+      }
+      this._load.feedJank(janksPerMin);
+    });
     this._load.on('sample', (s) => {
       if (this._debug && this._logger && this._logger.debug) {
-        this._logger.debug(`[load] high=${s.high} cpu=${s.cpuActive} dwm=${s.dwmActive} drops/min=${s.dwmDropsPerMin.toFixed(1)}`);
+        this._logger.debug(`[load] high=${s.high} cpu=${s.cpuActive} pdh=${s.pdhActive} jank=${s.jankActive} perfPct=${s.pdhPerfPct.toFixed(0)} janks/min=${s.janksPerMin}`);
       }
     });
     this._load.on('signal', (s) => this._ingest('load', s));
 
-    // DWM 副判据周期采样
-    if (this._cfg.dwmEnabled !== false) {
-      this._dwmTimer = setInterval(() => {
-        const t = getDwmTiming();
-        if (t) this._load.feedDwm(t);
-        else this._load.feedDwm(null); // 回退纯 CPU
-      }, this._cfg.dwmPollMs || 1000);
-      if (this._dwmTimer.unref) this._dwmTimer.unref();
+    // PDH 副判据周期采样（处理器性能比）
+    if (this._cfg.pdhEnabled !== false) {
+      this._pdhTimer = setInterval(() => this._samplePdh(), this._cfg.pdhPollMs || 1000);
+      if (this._pdhTimer.unref) this._pdhTimer.unref();
     }
 
     // 状态机转移 → 施效
@@ -125,6 +133,7 @@ class Orchestrator extends EventEmitter {
 
     this._idle.start();
     this._cpu.start();
+    if (this._cfg.jankEnabled !== false) this._jank.start();
   }
 
   /**
@@ -166,6 +175,12 @@ class Orchestrator extends EventEmitter {
   _heartbeatApply(signalType) {
     const out = this._sm.feed({ type: signalType });
     if (out) this._apply(out);
+  }
+
+  /** PDH 副判据采样（回退：PDH 不可用时喂 null） */
+  _samplePdh() {
+    const p = getProcessorPerformance();
+    this._load.feedPdh(p ? p.perfPct : null);
   }
 
   _ingest(src, signal) {
@@ -210,6 +225,9 @@ class Orchestrator extends EventEmitter {
       case 'settings':
         this.emit('settings');
         break;
+      case 'web':
+        this.emit('web');
+        break;
       case 'quit':
         this.emit('quit');
         break;
@@ -220,6 +238,8 @@ class Orchestrator extends EventEmitter {
 
   _refreshTray() {
     if (this._tray) this._tray.refresh(this._snapshot());
+    // 状态变化同步推送给 web 侧（SSE）
+    this.emit('runtime', this.getRuntime());
   }
 
   _snapshot() {
@@ -231,13 +251,96 @@ class Orchestrator extends EventEmitter {
     };
   }
 
+  /**
+   * 运行态快照（供 web 状态展示与 SSE 推送）。
+   */
+  getRuntime() {
+    return {
+      state: this._sm.state,
+      manual: this._sm.isManual,
+      paused: this._paused,
+      available: this._power ? this._power.available : [],
+      cpuEma: this._cpu.lastPct,
+      idleMs: this._idle.lastIdleMs,
+      idleThresholdMs: this._idle.thresholdMs,
+      pdhPerfPct: this._load.pdhPerfPct,
+      janksPerMin: this._load.janksPerMin,
+      isHigh: this._load.isHigh,
+      uptime: Date.now() - (this._startedAt || Date.now()),
+    };
+  }
+
+  /**
+   * 配置热重载：把新 cfg 应用到正在运行的 monitors / state-machine，不重启进程。
+   * 忽略非运行时字段（version/schemeMapping/lastScheme/autoStart/logLevel）。
+   * @param {object} cfg 完整配置（来自 ConfigStore.getAll）
+   */
+  applyConfig(cfg) {
+    this._cfg = { ...this._cfg, ...cfg };
+    // idle
+    this._idle.setThreshold(cfg.idleThresholdMin * 60 * 1000);
+    this._idle.setPollMs(cfg.idlePollMs);
+    this._beatMs = cfg.idlePollMs || 2000;
+    // cpu
+    this._cpu.setInterval(cfg.cpuSampleMs);
+    this._cpu.setEma(cfg.cpuEma);
+    // load（重建滞回，保留态）
+    this._load.applyThresholds(cfg);
+    // jank 开关联动（探针自带 start/stop）
+    const jankOn = cfg.jankEnabled !== false;
+    if (jankOn && !this._jank.enabled) {
+      this._jank.setEnabled(true);
+      this._jank.start();
+    } else if (!jankOn && this._jank.enabled) {
+      this._jank.stop();
+      this._load.feedJank(null);
+    }
+    // state machine
+    this._sm.setPreferUltimate(cfg.preferUltimate !== false);
+    this._sm.setMinDwellMs(cfg.minDwellSec * 1000);
+    // pdh timer 开关联动
+    const pdhOn = cfg.pdhEnabled !== false;
+    if (pdhOn && !this._pdhTimer) {
+      this._pdhTimer = setInterval(() => this._samplePdh(), cfg.pdhPollMs || 1000);
+      if (this._pdhTimer.unref) this._pdhTimer.unref();
+    } else if (!pdhOn && this._pdhTimer) {
+      clearInterval(this._pdhTimer);
+      this._pdhTimer = null;
+      this._load.feedPdh(null);
+    }
+    // beat 周期变更：重启心跳
+    this._restartBeat();
+    // mode
+    if (cfg.mode === 'manual') {
+      this._paused = true;
+      this._sm.setManual(cfg.manualScheme);
+      this._apply(cfg.manualScheme);
+    } else if (this._paused) {
+      this._paused = false;
+      this._sm.setAuto();
+    }
+    this._refreshTray();
+  }
+
+  _restartBeat() {
+    if (this._beatTimer) clearInterval(this._beatTimer);
+    this._beatTimer = setInterval(() => this._heartbeat(), this._beatMs);
+    if (this._beatTimer.unref) this._beatTimer.unref();
+  }
+
+  /** web 侧调用托盘等价命令（mode/pause/autostart/web）。 */
+  command(cmd) {
+    this._onTrayCommand(cmd);
+  }
+
   stop() {
     this._idle.stop();
     this._cpu.stop();
+    this._jank.stop();
     if (this._beatTimer) clearInterval(this._beatTimer);
     this._beatTimer = null;
-    if (this._dwmTimer) clearInterval(this._dwmTimer);
-    this._dwmTimer = null;
+    if (this._pdhTimer) clearInterval(this._pdhTimer);
+    this._pdhTimer = null;
   }
 }
 

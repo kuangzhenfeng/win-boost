@@ -2,21 +2,20 @@
 
 const { EventEmitter } = require('events');
 const { Hysteresis } = require('../state/hysteresis');
-const { getDwmTiming, isAvailable } = require('../native/dwm-native');
 
 /**
- * LoadMonitor：聚合 CPU 与 DWM 丢帧，带滞回，发 load_high / load_normal 信号。
+ * LoadMonitor：聚合 CPU 利用率、处理器性能比、卡顿，带滞回，发 load_high / load_normal 信号。
  *
  * 防抖策略（关键）：
- *  - CPU 与 DWM 任一判为 high → 整体 high（升档）。
- *  - 两者都 normal → 整体 normal（降档）。
- *  这样避免两者交替抖动时反复跳档。
+ *  - CPU / PDH / Jank 任一判为 high → 整体 high（升档）。
+ *  - 三者都 normal → 整体 normal（降档）。
+ *  这样避免任一路抖动时反复跳档。
  *
- * DWM 不可用（null）时，仅依赖 CPU。
+ * 各判据失效（CPU/Jank 路无失效；PDH 在不可用时）返回 null，仅依赖其余。
  *
  * 事件：
  *   - 'signal' { type: 'load_high' | 'load_normal' }
- *   - 'sample' { cpu, dwmDropsPerMin } （debug 观察）
+ *   - 'sample' { pdhPerfPct, janksPerMin } （debug 观察）
  */
 class LoadMonitor extends EventEmitter {
   constructor({
@@ -29,7 +28,8 @@ class LoadMonitor extends EventEmitter {
     this._logger = logger;
     this._debug = debug;
     this._now = now;
-    this._dwmEnabled = cfg ? cfg.dwmEnabled !== false : true;
+    this._pdhEnabled = cfg ? cfg.pdhEnabled !== false : true;
+    this._jankEnabled = cfg ? cfg.jankEnabled !== false : true;
 
     // CPU 滞回：进入阈值高，退出阈值低
     this._cpu = new Hysteresis({
@@ -40,23 +40,31 @@ class LoadMonitor extends EventEmitter {
       now,
     });
 
-    // DWM 滞回：以"每分钟丢帧数"为量
-    this._dwm = new Hysteresis({
-      enter: cfg.dwmDropFramesPerMin,
-      exit: 0,
-      enterHoldMs: cfg.dwmHoldSec * 1000,
-      exitHoldMs: cfg.dwmHoldSec * 1000,
+    // PDH 滞回：以"% Processor Performance"为量
+    // exit 固定 100（标称频率，回到不睿频即退出；与 enter≥110 形成死区）
+    this._pdh = new Hysteresis({
+      enter: cfg.pdhHighPct,
+      exit: 100,
+      enterHoldMs: cfg.pdhHoldSec * 1000,
+      exitHoldMs: cfg.pdhHoldSec * 1000,
       now,
     });
 
-    // DWM 累计丢帧与时间窗口（按分钟折算）
-    this._dwmLast = null; // {cFrameDropped, qpc}
-    this._dwmDropsPerMin = 0;
+    // 卡顿滞回：以"每分钟卡顿次数"为量（exit:0）
+    this._jank = new Hysteresis({
+      enter: cfg.jankPerMin,
+      exit: 0,
+      enterHoldMs: cfg.jankHoldSec * 1000,
+      exitHoldMs: cfg.jankHoldSec * 1000,
+      now,
+    });
 
     this._cpuActive = false;
-    this._dwmActive = false;
+    this._pdhActive = false;
+    this._jankActive = false;
+    this._pdhPerfPct = 0;
+    this._janksPerMin = 0;
     this._high = false;
-    this._dwmUsable = isAvailable();
   }
 
   _log(level, msg) {
@@ -71,44 +79,47 @@ class LoadMonitor extends EventEmitter {
     this._recompute();
   }
 
-  /** DWM 采样喂入（由 orchestrator 周期调用，返回 timing 或 null） */
-  feedDwm(timing) {
-    if (!this._dwmEnabled || !timing) {
-      this._dwmDropsPerMin = 0;
-      // DWM 不可用：强制 DWM 判据为非 high
-      if (this._dwmActive) {
-        this._dwmActive = false;
+  /** 处理器性能比采样喂入（perfPct 为 % Processor Performance，100=标称/>100=睿频） */
+  feedPdh(perfPct) {
+    if (!this._pdhEnabled || perfPct == null || !isFinite(perfPct)) {
+      // PDH 不可用：强制 PDH 判据为非 high
+      if (this._pdhActive) {
+        this._pdhActive = false;
         this._recompute();
       }
       return;
     }
-    const cur = { cFrameDropped: timing.cFrameDropped, qpc: timing.qpc, qpcFreq: timing.qpcFreq };
-    if (this._dwmLast) {
-      const dtSec = (cur.qpc - this._dwmLast.qpc) / (cur.qpcFreq || 1);
-      const dropped = cur.cFrameDropped - this._dwmLast.cFrameDropped;
-      if (dtSec > 0 && dropped >= 0) {
-        this._dwmDropsPerMin = (dropped / dtSec) * 60;
-      }
-    }
-    this._dwmLast = cur;
-    const edge = this._dwm.feed(this._dwmDropsPerMin);
-    if (edge === 'enter') this._dwmActive = true;
-    else if (edge === 'exit') this._dwmActive = false;
+    this._pdhPerfPct = perfPct;
+    const edge = this._pdh.feed(perfPct);
+    if (edge === 'enter') this._pdhActive = true;
+    else if (edge === 'exit') this._pdhActive = false;
     this._recompute();
   }
 
-  /** 触发一次 DWM 采样并喂入（封装 getDwmTiming） */
-  sampleDwm() {
-    this.feedDwm(getDwmTiming());
+  /** 卡顿采样喂入（janksPerMin 为每分钟卡顿次数） */
+  feedJank(janksPerMin) {
+    if (!this._jankEnabled || janksPerMin == null || !isFinite(janksPerMin)) {
+      // Jank 不可用/未启用：强制 Jank 判据为非 high
+      if (this._jankActive) {
+        this._jankActive = false;
+        this._recompute();
+      }
+      return;
+    }
+    this._janksPerMin = janksPerMin;
+    const edge = this._jank.feed(janksPerMin);
+    if (edge === 'enter') this._jankActive = true;
+    else if (edge === 'exit') this._jankActive = false;
+    this._recompute();
   }
 
   _recompute() {
-    // 任一 high → high；两者 normal → normal
-    const high = this._cpuActive || this._dwmActive;
+    // 任一 high → high；三者 normal → normal
+    const high = this._cpuActive || this._pdhActive || this._jankActive;
     if (high !== this._high) {
       this._high = high;
       const type = high ? 'load_high' : 'load_normal';
-      this._log('info', `${type} (cpu=${this._cpuActive}, dwm=${this._dwmActive}, drops/min=${this._dwmDropsPerMin.toFixed(1)})`);
+      this._log('info', `${type} (cpu=${this._cpuActive}, pdh=${this._pdhActive}, jank=${this._jankActive}, perfPct=${this._pdhPerfPct.toFixed(0)}, janks/min=${this._janksPerMin})`);
       this.emit('signal', { type });
     }
     if (this._debug) {
@@ -116,14 +127,76 @@ class LoadMonitor extends EventEmitter {
       this.emit('sample', {
         high: this._high,
         cpuActive: this._cpuActive,
-        dwmActive: this._dwmActive,
-        dwmDropsPerMin: this._dwmDropsPerMin,
+        pdhActive: this._pdhActive,
+        jankActive: this._jankActive,
+        pdhPerfPct: this._pdhPerfPct,
+        janksPerMin: this._janksPerMin,
       });
     }
   }
 
   get isHigh() {
     return this._high;
+  }
+
+  // ---- 运行态/热重载（供 web 状态展示与配置热重载）----
+  get cpuActive() {
+    return this._cpuActive;
+  }
+
+  get pdhActive() {
+    return this._pdhActive;
+  }
+
+  get pdhPerfPct() {
+    return this._pdhPerfPct;
+  }
+
+  get jankActive() {
+    return this._jankActive;
+  }
+
+  get janksPerMin() {
+    return this._janksPerMin;
+  }
+
+  /**
+   * 热重载阈值：用新 cfg 重建 CPU/PDH/Jank 三套 Hysteresis。
+   * 保留当前 high/cpuActive/pdhActive/jankActive 态，避免热重载瞬间误翻转。
+   * @param {object} cfg
+   */
+  applyThresholds(cfg) {
+    this._pdhEnabled = cfg ? cfg.pdhEnabled !== false : true;
+    this._jankEnabled = cfg ? cfg.jankEnabled !== false : true;
+    const now = this._now;
+    const cpuWasActive = this._cpu.active;
+    const pdhWasActive = this._pdh.active;
+    const jankWasActive = this._jank.active;
+    this._cpu = new Hysteresis({
+      enter: cfg.cpuHighPct,
+      exit: cfg.cpuCooldownPct,
+      enterHoldMs: cfg.cpuHighHoldSec * 1000,
+      exitHoldMs: cfg.cpuCooldownHoldSec * 1000,
+      now,
+    });
+    this._pdh = new Hysteresis({
+      enter: cfg.pdhHighPct,
+      exit: 100,
+      enterHoldMs: cfg.pdhHoldSec * 1000,
+      exitHoldMs: cfg.pdhHoldSec * 1000,
+      now,
+    });
+    this._jank = new Hysteresis({
+      enter: cfg.jankPerMin,
+      exit: 0,
+      enterHoldMs: cfg.jankHoldSec * 1000,
+      exitHoldMs: cfg.jankHoldSec * 1000,
+      now,
+    });
+    this._cpuActive = cpuWasActive;
+    this._pdhActive = pdhWasActive;
+    this._jankActive = jankWasActive;
+    this._recompute();
   }
 }
 

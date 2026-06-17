@@ -1,0 +1,27 @@
+const os = require('os');
+const fs = require('fs');
+const path = require('path');
+const dir = path.join(os.tmpdir(), `wb-rnd-${process.pid}-${Date.now()}`);
+fs.mkdirSync(dir, { recursive: true });
+process.env.APPDATA = dir;
+const { EventEmitter } = require('events');
+const { Orchestrator } = require('./src/orchestrator');
+const { HistoryRecorder } = require('./src/metrics/history-recorder');
+const { createWebServer } = require('./src/web/server');
+const { ConfigStore } = require('./src/config/config-store');
+const cfg = require('./src/config/defaults.json');
+const power = { available:['SAVER','BALANCED','PERFORMANCE','ULTIMATE'], async getCurrent(){return{scheme:'BALANCED'};}, async setActive(){return{changed:true};} };
+const tray = Object.assign(new EventEmitter(), { refresh(){}, setAutostart(){} });
+(async () => {
+  const orch = new Orchestrator({ cfg, power, tray, logger: null });
+  await orch.start();
+  const history = new HistoryRecorder({ orchestrator: orch, logger: null });
+  history.start();
+  const now = Math.floor(Date.now()/1000);
+  for (let i=0;i<120;i++) history._minute.push({t: now-i*60, cpu: 30+i%40, perf: 120+(i%50), jank: (i%5), scheme: i%2?'BALANCED':'PERFORMANCE'});
+  for (let i=0;i<48;i++) history._hour.push({t: now-i*3600, cpu: 40+i%30, perf: 110+(i%40), jank: (i%4), scheme: 'BALANCED'});
+  const cs = new ConfigStore({ logger: null }); cs.load();
+  const web = await createWebServer({ configStore: cs, orchestrator: orch, historyRecorder: history, token:'t', logger:null, onAutostart(){} });
+  console.log('READY ' + web.port);
+  setTimeout(()=>process.exit(0), 8*60*1000);
+})();

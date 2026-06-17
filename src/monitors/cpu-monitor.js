@@ -53,6 +53,34 @@ class CpuMonitor extends EventEmitter {
     }
   }
 
+  // ---- 运行态/热重载（供 web 状态展示与配置热重载）----
+  get intervalMs() {
+    return this._interval;
+  }
+
+  get emaAlpha() {
+    return this._alpha;
+  }
+
+  get lastPct() {
+    return this._ema === null ? 0 : this._ema;
+  }
+
+  /** 改采样周期：若定时器在跑则重建。 */
+  setInterval(ms) {
+    this._interval = ms;
+    if (this._timer) {
+      clearInterval(this._timer);
+      this._prev = summarize(os.cpus());
+      this._timer = setInterval(() => this._tick(), this._interval);
+      if (this._timer.unref) this._timer.unref();
+    }
+  }
+
+  setEma(a) {
+    this._alpha = a;
+  }
+
   _tick() {
     const cur = summarize(os.cpus());
     const dTotal = cur.total - this._prev.total;

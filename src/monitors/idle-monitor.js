@@ -19,6 +19,7 @@ class IdleMonitor extends EventEmitter {
     this._debug = debug;
     this._logger = logger;
     this._idle = false; // 当前是否处于空闲态
+    this._lastIdleMs = 0; // 最近一次采样值（供 web 状态展示）
     this._timer = null;
   }
 
@@ -52,6 +53,7 @@ class IdleMonitor extends EventEmitter {
       this._log('error', `采样失败: ${e.message}`);
       return;
     }
+    this._lastIdleMs = idleMs;
     if (this._debug) this.emit('sample', { idleMs });
 
     const nowIdle = idleMs >= this._threshold;
@@ -65,6 +67,33 @@ class IdleMonitor extends EventEmitter {
 
   get isIdle() {
     return this._idle;
+  }
+
+  // ---- 运行态/热重载（供 web 状态展示与配置热重载）----
+  get thresholdMs() {
+    return this._threshold;
+  }
+
+  get pollMs() {
+    return this._pollMs;
+  }
+
+  get lastIdleMs() {
+    return this._lastIdleMs;
+  }
+
+  setThreshold(ms) {
+    this._threshold = ms;
+  }
+
+  /** 改采样周期：若定时器在跑则重建，保证热重载即时生效。 */
+  setPollMs(ms) {
+    this._pollMs = ms;
+    if (this._timer) {
+      clearInterval(this._timer);
+      this._timer = setInterval(() => this._tick(), this._pollMs);
+      if (this._timer.unref) this._timer.unref();
+    }
   }
 }
 
