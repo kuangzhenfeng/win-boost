@@ -455,6 +455,22 @@
         if (msg.type === 'runtime') {
           runtime = msg.runtime;
           paintRuntime();
+          // 曲线增量：仅 1h 维度（秒级粒度）实时追加点并平滑重绘。
+          // 1d/30d 维度数据源是分钟/小时桶，与秒级 trendPoint 粒度不同，忽略以免污染曲线。
+          if (msg.trendPoint && currentRange === '1h') appendTrendPoint(msg.trendPoint);
+        } else if (msg.type === 'ui-boost') {
+          // UI 提速提权流程结果（首次会弹 UAC，子参数改值也会触发）：成功/失败反馈
+          if (msg.ok) {
+            toast('UI 提速操作完成');
+          } else {
+            // 失败：重拉配置回填开关真实态，并提示原因（含 UAC 拒绝/超时/写失败）
+            api('/api/config', 'GET').then((c) => {
+              cfg = c;
+              const inp = fieldInputs['uiBoostEnabled'];
+              if (inp) { inp.checked = !!c.uiBoostEnabled; applyDepends(); }
+            });
+            toast(`UI 提速操作失败：${msg.reason || '未知原因'}`, true);
+          }
         }
       } catch { /* ignore */ }
     };
@@ -466,8 +482,10 @@
   const trendCanvas = $('trendCanvas');
   const chartTip = $('chartTip');
   let trendFadeTimer = null;
+  let trendPoints = [];      // 当前已渲染的点集（增量更新缓存）
+  let trendRedrawTimer = null; // 重绘节流（避免每秒全量重绘抖动）
 
-  /** 拉取指定维度数据并重绘。 */
+  /** 拉取指定维度数据并重绘（全量，用于初始加载与维度切换）。 */
   async function loadTrend(range) {
     currentRange = range;
     document.querySelectorAll('#rangeSwitcher button').forEach((b) => {
@@ -475,17 +493,46 @@
     });
     try {
       const data = await api(`/api/metrics?range=${encodeURIComponent(range)}`, 'GET');
-      const pts = (data && data.points) || [];
+      trendPoints = (data && data.points) || [];
       trendCanvas.style.opacity = '0';
       clearTimeout(trendFadeTimer);
       trendFadeTimer = setTimeout(() => {
-        WBChart.mount(trendCanvas, { points: pts, range, tooltip: chartTip });
+        WBChart.mount(trendCanvas, { points: trendPoints, range, tooltip: chartTip });
         trendCanvas.style.transition = 'opacity 0.35s ease';
         trendCanvas.style.opacity = '1';
       }, 120);
     } catch (e) {
       toast(`趋势数据加载失败：${e.message}`, true);
     }
+  }
+
+  /**
+   * 增量追加一个秒级采样点并重绘（1h 维度专用，由 SSE 每秒驱动）。
+   *
+   * 节流：SSE 每秒推一个点，但全量重绘每秒一次仍会抖动（尤其悬停 tooltip 时），
+   * 故用 500ms 节流合并——曲线推进流畅（约每半秒更新），又不抢主线程。
+   * 去重：同秒重复点不追加（防止 SSE 重连等重复帧）。
+   */
+  function appendTrendPoint(pt) {
+    if (!pt || typeof pt.t !== 'number') return;
+    const last = trendPoints[trendPoints.length - 1];
+    if (last && pt.t <= last.t) return; // 同秒或乱序，丢弃
+    trendPoints.push(pt);
+    // 滑动窗口：1h 维度只保留最近 3600 秒，避免数组无限增长
+    const since = pt.t - 3600;
+    while (trendPoints.length && trendPoints[0].t < since) trendPoints.shift();
+    scheduleTrendRedraw();
+  }
+
+  /** 节流重绘：500ms 内最多一次，合并连续的增量点。 */
+  function scheduleTrendRedraw() {
+    if (trendRedrawTimer) return;
+    trendRedrawTimer = setTimeout(() => {
+      trendRedrawTimer = null;
+      if (!document.hidden && currentRange === '1h') {
+        WBChart.mount(trendCanvas, { points: trendPoints, range: currentRange, tooltip: chartTip });
+      }
+    }, 500);
   }
 
   function bindRangeSwitcher() {
@@ -504,10 +551,11 @@
     }, 150);
   });
 
-  // 周期刷新趋势（每 30s 拉一次当前维度，保持曲线跟进）
+  // 后台低频对齐：SSE 增量只更新 1h 维度。切回前台或长时间运行后，
+  // 每 5 分钟全量拉一次当前维度，校正 1d/30d 曲线与潜在丢点。
   setInterval(() => {
     if (document.visibilityState === 'visible') loadTrend(currentRange);
-  }, 30000);
+  }, 5 * 60 * 1000);
 
   // ---------- 启动 ----------
   async function boot() {

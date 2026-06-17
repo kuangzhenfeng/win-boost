@@ -80,6 +80,19 @@ test('采样累积到 raw，queryByRange 1h 返回秒级（含 perf）', () => {
   rec.stop();
 });
 
+test('latest: 返回最近一个秒级采样点（供 SSE 增量推送曲线）', () => {
+  withTmpAppData();
+  const t0 = 2_000_000;
+  const rec = new HistoryRecorder({ orchestrator: makeOrch('PERFORMANCE', 77, 145, 3), now: () => t0 * 1000 });
+  rec.start();
+  assert.equal(rec.latest(), null); // 空 → null
+  rec.push({ t: t0, cpu: 50, perf: 120, jank: 1, scheme: 'BALANCED' });
+  rec.push({ t: t0 + 1, cpu: 60, perf: 130, jank: 2, scheme: 'PERFORMANCE' });
+  const lp = rec.latest();
+  assert.deepEqual(lp, { t: t0 + 1, cpu: 60, perf: 130, jank: 2, scheme: 'PERFORMANCE' });
+  rec.stop();
+});
+
 test('跨分钟边界 fold 出 minute 点（perf 随平均）', () => {
   withTmpAppData();
   const base = minuteStart(1_000_000); // 整分钟

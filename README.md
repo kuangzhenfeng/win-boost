@@ -90,6 +90,7 @@ npm run debug              # 控制台日志 + 逐事件打印
 | jankEnabled | true | 是否启用卡顿副判据（心跳探针） |
 | jankPerMin | 20 | 每分钟卡顿升档阈值（gap>60ms 计一次） |
 | jankHoldSec | 8 | 持续秒数 |
+| uiBoostEnabled | false | 启用 UI 提速（见下） |
 | preferUltimate | true | 升档优先卓越性能 |
 | minDwellSec | 15 | 最小驻留秒数（防抖） |
 | autoStart | false | 开机自启镜像 |
@@ -148,6 +149,7 @@ npm run pkg:win   # 产出 dist/win-boost.exe（需 @yao-pkg/pkg）
 - **GetTickCount 49.7 天回绕**：`(now - dwTime) >>> 0` 自洽。
 - **web 端口随机**：每次启动端口可能变化；托盘打开用进程内存端口，`web-server.json` 供外部发现。
 - **web 令牌**：每次启动生成随机令牌，变更类接口必带；仅绑 127.0.0.1，不对外。
+- **UI 提速**：改 HKLM 系统调度参数需管理员。实现走「计划任务免 UAC」——首次开启弹一次 UAC 创建最高权限计划任务（`schtasks` XML 定义 `RunLevel=HighestAvailable`，任务体结构化 `{exe,args}` 经 XML 装载，规避 `/tr` 对含空格路径的引号嵌套解析），之后所有切换经 `schtasks /run` 零 UAC 触发。改三个参数：`Win32PrioritySeparation=38`（短量子+前台最大提升，即时生效）、`SystemResponsiveness=10`、`NetworkThrottlingIndex=0xFFFFFFFF`。启用时原子备份原值到 `ui-boost-backup.json`（部分写入失败自动回滚，不落盘备份），禁用/退出时还原；`backup.json` 存在即「当前已提速」（提速态唯一可信事实来源，优于开关意图）。进程退出必还原，下次启动 `reconcile` 按配置重新启用——避免崩溃后系统长期处于改动态。
 
 ## 目录结构
 
@@ -163,9 +165,14 @@ src/
 ├─ config/config-store.js
 ├─ metrics/history-recorder.js  运行态多级降采样采样器 + 落盘
 ├─ power/{scheme-registry,power-controller}.js
-├─ native/{koffi-loader,idle-native,pdh-native}.js
+├─ native/{koffi-loader,idle-native,pdh-native,shell-native}.js
 ├─ monitors/{idle,cpu,jank,load}-monitor.js
 ├─ state/{state-machine,hysteresis}.js
+├─ ui-boost/            UI 提速（系统调度参数提权管理）
+│  ├─ ui-boost-registry.js    3 个 HKLM 参数定义（纯数据）
+│  ├─ ui-boost-ops.js         注册表读/写/备份/还原（提权实例执行体）
+│  ├─ elevated-runner.js      schtasks 计划任务（XML + /RL HIGHEST）
+│  └─ ui-boost-controller.js  启用/禁用/启动恢复/退出还原编排
 ├─ ui/tray-ui.js        托盘菜单（含"打开配置网页"）
 └─ web/
    ├─ server.js         内嵌 HTTP + SSE + 令牌 + 静态服务

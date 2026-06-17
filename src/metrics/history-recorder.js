@@ -199,6 +199,11 @@ class HistoryRecorder {
   }
 
   // ---- 查询 ----
+  /** 最近一个秒级采样点（无数据返回 null）。供 SSE 流增量推送曲线用。 */
+  latest() {
+    return this._raw.length ? this._raw[this._raw.length - 1] : null;
+  }
+
   /**
    * 按维度切片返回时间序列。非法 range 返回 null。
    * @param {'1h'|'1d'|'30d'} range

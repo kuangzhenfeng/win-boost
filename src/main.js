@@ -141,6 +141,50 @@ async function runDaemon({ debug } = {}) {
 
   orch.on('autostart', (value) => setAutostart(value));
 
+  /**
+   * UI 提速联动：处理开关与子参数变更。
+   *
+   * 两类动作由调用方判定后传入：
+   *  - 开关翻转（enableToggled=true）：enable/disable 整套
+   *  - 仅子参数变更（enableToggled=false，仍处于提速态）：applyValues 重写注册表
+   * 提权流程异步、首次会弹 UAC；结果经 resultCb 回传（web 侧转 SSE toast）。
+   * 优化值统一由 valuesFromConfig(cfg) 派生，保证"配置→注册表值"映射唯一。
+   */
+  async function setUiBoost({ enableToggled, cfg }, resultCb) {
+    try {
+      const { valuesFromConfig } = require('./ui-boost/ui-boost-registry');
+      const values = valuesFromConfig(cfg);
+      let res;
+      if (enableToggled) {
+        // 开关翻转：整体启用/禁用
+        const enabled = cfg.uiBoostEnabled === true;
+        res = enabled ? await uiBoost.enable({ values }) : await uiBoost.disable();
+      } else if (cfg.uiBoostEnabled) {
+        // 已提速、仅子参数变更：重写注册表为新优化值（不改开关态）
+        res = await uiBoost.applyValues(values);
+      } else {
+        // 未提速且非开关翻转：无动作（子参数改动等开启时再生效）
+        res = { ok: true };
+      }
+      if (res.ok) {
+        if (enableToggled) {
+          cfgStore.set({ uiBoostEnabled: cfg.uiBoostEnabled === true });
+          logger.info(cfg.uiBoostEnabled ? 'UI 提速已开启' : 'UI 提速已关闭');
+        } else if (cfg.uiBoostEnabled) {
+          logger.info('UI 提速参数已更新');
+        }
+      } else {
+        // 失败：开关翻转失败时回退开关态（与实际对齐），子参数失败不影响开关
+        if (enableToggled) cfgStore.set({ uiBoostEnabled: uiBoost.isActive });
+        logger.warn(`UI 提速操作失败: ${res.reason}`);
+      }
+      if (resultCb) resultCb(res.ok, res.reason);
+    } catch (e) {
+      logger.error(`UI 提速操作异常: ${e.message}`);
+      if (resultCb) resultCb(false, e.message);
+    }
+  }
+
   orch.on('settings', () => {
     const { exec } = require('child_process');
     exec(`explorer "${getRootDir()}"`, { windowsHide: true });
@@ -160,6 +204,29 @@ async function runDaemon({ debug } = {}) {
   const { isInstalled } = require('./autostart');
   tray.setAutostart(isInstalled());
 
+  // ---- UI 提速控制器 ----
+  // 提权任务的执行目标：固定指向 win-boost 自身的 --ui-boost-op 流程。
+  // 打包态 exe 直接跑；开发态 node 跑 main.js。结构化 {exe, args} 经 XML 装载，
+  // 规避 schtasks /tr 对含空格路径的引号嵌套解析问题。
+  const taskTarget = process.pkg
+    ? { exe: process.execPath, args: ['--ui-boost-op'] }
+    : { exe: process.execPath, args: [path.join(__dirname, 'main.js'), '--ui-boost-op'] };
+  const { UiBoostController } = require('./ui-boost/ui-boost-controller');
+  const uiBoost = new UiBoostController({ taskTarget, logger });
+  // 启动恢复：以实际态（backup.json）对齐配置意图。
+  // - 配置想开但实际未开 → 重新启用（崩溃/UAC 拒绝后自愈）
+  // - 配置想关但实际仍开 → 还原（异常退出残留清理）
+  try {
+    const { valuesFromConfig } = require('./ui-boost/ui-boost-registry');
+    const res = await uiBoost.reconcile(
+      cfgStore.get('uiBoostEnabled') === true,
+      valuesFromConfig(cfgStore.getAll()),
+    );
+    if (!res.ok) logger.warn(`UI 提速启动恢复失败: ${res.reason}`);
+  } catch (e) {
+    logger.warn(`UI 提速启动恢复异常: ${e.message}`);
+  }
+
   // ---- 内嵌 web 服务（仅 127.0.0.1，随机端口 + 一次性令牌）----
   const crypto = require('crypto');
   const { createWebServer } = require('./web/server');
@@ -178,6 +245,7 @@ async function runDaemon({ debug } = {}) {
       token,
       logger,
       onAutostart: (v) => setAutostart(v),
+      onUiBoost: (opts, resultCb) => setUiBoost(opts, resultCb),
     });
     logger.info(`配置网页: ${web.url}`);
     // 写发现信息（端口/令牌/PID），供外部工具/书签重建
@@ -213,6 +281,17 @@ async function runDaemon({ debug } = {}) {
       tray.stop();
       if (history) history.stop();
       if (web) await web.close();
+      // UI 提速：退出时若仍提速，还原注册表（保持"走时跟来时一样"）。
+      // 仅在用户未显式关闭时还原；config.uiBoostEnabled 仍为 true 表示用户意图持续开启，
+      // 但进程退出必须还原系统参数（下次启动由 reconcile 重新启用）——避免崩溃后系统长期处于改动态。
+      if (uiBoost && uiBoost.isActive) {
+        logger.info('退出前还原 UI 提速参数');
+        try {
+          await uiBoost.disable();
+        } catch (e) {
+          logger.warn(`退出还原 UI 提速失败: ${e.message}`);
+        }
+      }
     } finally {
       lock.release();
       logger.info('Win-Boost 已退出');
@@ -243,6 +322,7 @@ async function main() {
     if (has('--once')) return await cli.cmdOnce({ debug });
     if (has('--install')) return await cli.cmdInstall({ debug });
     if (has('--uninstall')) return await cli.cmdUninstall({ debug });
+    if (has('--ui-boost-op')) return await cli.cmdUiBoostOp();
     // 默认：启动守护
     return await runDaemon({ debug });
   } catch (e) {

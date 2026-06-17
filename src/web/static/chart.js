@@ -121,7 +121,14 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, cssW, cssH);
 
-    const { points, range, tooltip } = opts;
+    // 数据规范化：兼容历史 schema——已落盘的旧 minute/hour 点可能缺 jank 字段（dwm 时代遗留），
+    // 后端 aggregate 仅对折叠产生的新点取 ||0 兜底，旧点不会被回填。此处统一兜底为 0，
+    // 否则后续 rightY(p.jank) 等坐标计算会得到 NaN，导致卡顿曲线渲染异常/tooltip 显示 "NaN"。
+    const points = (opts.points || []).map((p) => ({
+      ...p,
+      jank: Number.isFinite(p.jank) ? p.jank : 0,
+    }));
+    const { range, tooltip } = opts;
     const left = PAD.left;
     const right = cssW - PAD.right;
     const top = PAD.top;

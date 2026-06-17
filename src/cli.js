@@ -216,10 +216,31 @@ async function cmdUninstall({ debug } = {}) {
   println('已移除开机自启');
 }
 
+/**
+ * --ui-boost-op：提权执行体。
+ *
+ * 由 UiBoostController 通过 schtasks /RL HIGHEST 任务触发（任务体固定为此命令）。
+ * 读 op 指令文件（JSON {op,values}）决定 apply 还是 revert，写 HKLM 后退出。
+ * apply 时取 op.values 作为优化值（由用户配置派生）。
+ * 在提权上下文运行（计划任务以最高权限），故 reg add 可写 HKLM。
+ * 非提权运行时 reg add 会失败——这是正常的，控制器只在提权任务里调用它。
+ */
+async function cmdUiBoostOp() {
+  const { readOp, apply, revert } = require('./ui-boost/ui-boost-ops');
+  const { op, values } = readOp();
+  if (op === 'revert') {
+    revert();
+  } else {
+    apply(values);
+  }
+  // 静默退出（任务体不打印，stdio 被 schtasks 收走）
+}
+
 module.exports = {
   cmdStatus,
   cmdSchemes,
   cmdOnce,
   cmdInstall,
   cmdUninstall,
+  cmdUiBoostOp,
 };

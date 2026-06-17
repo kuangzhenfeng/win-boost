@@ -22,6 +22,11 @@
   "jankPerMin": 20,
   "jankHoldSec": 8,
 
+  "uiBoostEnabled": false,
+  "uiBoostPriorityLevel": 38,
+  "uiBoostSystemResponsiveness": 10,
+  "uiBoostEnableNetworkThrottle": false,
+
   "preferUltimate": true,
   "minDwellSec": 15,
 
